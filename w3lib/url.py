@@ -77,21 +77,22 @@ _SPECIAL_QUERY_SAFEST_CHARS = _PATH_SAFEST_CHARS.translate(None, delete=b"'")
 _FRAGMENT_SAFEST_CHARS = _PATH_SAFEST_CHARS
 
 
-def _safe_url_split(
+def _safe_url_split_with_markers(
     url: str | bytes,
     encoding: str = "utf8",
     path_encoding: str = "utf8",
     quote_path: bool = True,
-) -> tuple[str, str, str, str, str]:
+) -> tuple[tuple[str, str, str, str, str], bool, bool]:
     # urlsplit() chokes on bytes input with non-ASCII chars,
     # so let's decode (to Unicode) using page encoding:
     #   - it is assumed that a raw bytes input comes from a document
     #     encoded with the supplied encoding (or UTF8 by default)
     #   - if the supplied (or default) encoding chokes,
     #     percent-encode offending bytes
-    parts = _urlsplit(
-        _strip(to_unicode(url, encoding=encoding, errors="percentencode"))
-    )
+    cleaned_url = _strip(to_unicode(url, encoding=encoding, errors="percentencode"))
+    parts = _urlsplit(cleaned_url)
+    has_query_marker = "?" in cleaned_url.partition("#")[0]
+    has_fragment_marker = "#" in cleaned_url
     tmp_buf = bytearray()  # utf-8 bytes
 
     if parts.username is not None or parts.password is not None:
@@ -134,6 +135,11 @@ def _safe_url_split(
     netloc = tmp_buf.decode()
     tmp_buf.clear()
 
+    # urlsplit() represents an empty port as None. Keep the explicit ":"
+    # delimiter instead of silently dropping it from the authority.
+    if parts.netloc.endswith(":"):
+        netloc += ":"
+
     if quote_path:
         _quote_into(parts.path.encode(path_encoding), tmp_buf, _PATH_SAFEST_CHARS)
         path = tmp_buf.decode()
@@ -170,7 +176,16 @@ def _safe_url_split(
         path,
         query,
         fragment,
-    )
+    ), has_query_marker, has_fragment_marker
+
+
+def _safe_url_split(
+    url: str | bytes,
+    encoding: str = "utf8",
+    path_encoding: str = "utf8",
+    quote_path: bool = True,
+) -> tuple[str, str, str, str, str]:
+    return _safe_url_split_with_markers(url, encoding, path_encoding, quote_path)[0]
 
 
 def safe_url_string(
@@ -215,8 +230,30 @@ def safe_url_string(
 
     Calling this function on an already "safe" URL will return the URL
     unmodified.
+
+    Empty query and fragment delimiters, as well as an explicit empty port
+    delimiter, are preserved.
     """
-    return _urlunsplit(*_safe_url_split(url, encoding, path_encoding, quote_path))
+    (
+        (scheme, netloc, path, query, fragment),
+        has_query_marker,
+        has_fragment_marker,
+    ) = _safe_url_split_with_markers(url, encoding, path_encoding, quote_path)
+    safe_url = _urlunsplit(scheme, netloc, path, query, fragment)
+
+    # _urlunsplit() cannot distinguish an absent query or fragment from an
+    # empty one. Restore those delimiters after serialization so that, for
+    # example, "https://example.com?#" does not become "https://example.com".
+    if has_query_marker and not query:
+        fragment_start = safe_url.find("#")
+        if fragment_start == -1:
+            safe_url += "?"
+        else:
+            safe_url = f"{safe_url[:fragment_start]}?{safe_url[fragment_start:]}"
+    if has_fragment_marker and not fragment:
+        safe_url += "#"
+
+    return safe_url
 
 
 _parent_dirs = re.compile(r"/?(\.\./)+")

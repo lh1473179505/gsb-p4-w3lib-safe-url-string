@@ -1,6 +1,13 @@
 w3lib release notes
 ===================
 
+Unreleased
+----------
+
+- :func:`~w3lib.url.safe_url_string` now preserves empty query and fragment
+  delimiters, as well as an explicit empty port delimiter, while keeping the
+  function idempotent for already-safe URLs.
+
 2.4.1 (2026-03-20)
 ------------------
 

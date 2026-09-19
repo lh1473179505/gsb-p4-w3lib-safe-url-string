@@ -516,13 +516,9 @@ KNOWN_SAFE_URL_STRING_URL_ISSUES = {
     "https://%80.example",  # Invalid domain name (non-visible character)
     "http://192.168.0.256",  # Invalid IP address
     "http://192.168.0.0.0",  # Invalid IP address / domain name
-    "https://example.com:",  # Removes the :
     # Some path characters that RFC 2396 and RFC 3986 require escaping (%)
     # are not escaped.
     f"https://example.com/{PATH_TO_ENCODE}",
-    # ? is removed
-    "https://example.com?",
-    "https://example.com/?",
     # Some query characters that RFC 2396 and RFC 3986 require escaping (%)
     # are not escaped.
     f"a://example.com?{QUERY_TO_ENCODE}",
@@ -532,11 +528,6 @@ KNOWN_SAFE_URL_STRING_URL_ISSUES = {
         f"{scheme}://example.com?{SPECIAL_QUERY_TO_ENCODE}"
         for scheme in _SPECIAL_SCHEMES
     ),
-    # ? and # are removed
-    "https://example.com#",
-    "https://example.com/#",
-    "https://example.com?#",
-    "https://example.com/?#",
     # Some fragment characters that RFC 2396 and RFC 3986 require escaping
     # (%) are not escaped.
     f"a://example.com#{FRAGMENT_TO_ENCODE}",
@@ -648,6 +639,99 @@ class TestUrl:
 
         safeurl = safe_url_string('http://google.com/"hello"')
         assert safeurl == "http://google.com/%22hello%22"
+
+    @pytest.mark.parametrize(
+        "url",
+        [
+            "https://example.com?",
+            "https://example.com#",
+            "https://example.com/?",
+            "https://example.com/#",
+            "https://example.com?#",
+            "https://example.com/?#",
+        ],
+    )
+    def test_safe_url_string_preserves_empty_query_and_fragment_delimiters(
+        self, url
+    ):
+        safeurl = safe_url_string(url)
+        assert safeurl == url
+        assert safe_url_string(safeurl) == safeurl
+
+    @pytest.mark.parametrize(
+        ("url", "expected"),
+        [
+            ("https://example.com:", "https://example.com:"),
+            ("https://example.com:?", "https://example.com:?"),
+            ("https://example.com:#", "https://example.com:#"),
+            ("http://[::1]:", "http://[::1]:"),
+            ("https://例え.テスト:", "https://xn--r8jz45g.xn--zckzah:"),
+            ("http://%25user@example.com:", "http://%25user@example.com:"),
+            (
+                "https://example.com:/résumé?q=résumé",
+                "https://example.com:/r%C3%A9sum%C3%A9?q=r%C3%A9sum%C3%A9",
+            ),
+        ],
+    )
+    def test_safe_url_string_preserves_empty_port_delimiter(self, url, expected):
+        safeurl = safe_url_string(url)
+        assert safeurl == expected
+        assert safe_url_string(safeurl) == safeurl
+
+    @pytest.mark.parametrize(
+        ("url", "kwargs", "expected"),
+        [
+            (
+                "https://例え.テスト/é?",
+                {},
+                "https://xn--r8jz45g.xn--zckzah/%C3%A9?",
+            ),
+            (
+                "https://例え.テスト/é?#",
+                {"path_encoding": "latin-1"},
+                "https://xn--r8jz45g.xn--zckzah/%E9?#",
+            ),
+            (
+                "http://[::1]/é#",
+                {},
+                "http://[::1]/%C3%A9#",
+            ),
+            (
+                "http://[::1]/é?",
+                {"quote_path": False},
+                "http://[::1]/é?",
+            ),
+            (
+                "http://%25user@example.com/%25?",
+                {},
+                "http://%25user@example.com/%25?",
+            ),
+            (
+                "https://例え.テスト/é?unit=µ#",
+                {"encoding": "latin-1", "path_encoding": "latin-1"},
+                "https://xn--r8jz45g.xn--zckzah/%E9?unit=%B5#",
+            ),
+        ],
+    )
+    def test_safe_url_string_empty_delimiters_with_hosts_paths_and_encodings(
+        self, url, kwargs, expected
+    ):
+        safeurl = safe_url_string(url, **kwargs)
+        assert safeurl == expected
+        assert safe_url_string(safeurl, **kwargs) == safeurl
+
+    @pytest.mark.parametrize(
+        "url",
+        [
+            "https://example.com",
+            "https://example.com/",
+            "https://example.com:443/path?q=1#fragment",
+            "http://[::1]:8080/path?q=1",
+        ],
+    )
+    def test_safe_url_string_ascii_idempotency(self, url):
+        safeurl = safe_url_string(url)
+        assert safe_url_string(safeurl) == safeurl
 
     def test_safe_url_string_with_query(self):
         safeurl = safe_url_string("http://www.example.com/£?unit=µ")
@@ -831,7 +915,7 @@ class TestUrl:
         )
         assert (
             safe_url_string("http://www.example.com:/résumé?q=résumé")
-            == "http://www.example.com/r%C3%A9sum%C3%A9?q=r%C3%A9sum%C3%A9"
+            == "http://www.example.com:/r%C3%A9sum%C3%A9?q=r%C3%A9sum%C3%A9"
         )
 
     def test_safe_url_string_preserve_nonfragment_hash(self):
