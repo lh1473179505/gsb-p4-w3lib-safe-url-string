@@ -1,6 +1,13 @@
 w3lib release notes
 ===================
 
+2.4.2 (unreleased)
+------------------
+
+- :func:`~w3lib.url.safe_url_string` now preserves empty query and fragment
+  delimiters, and a trailing colon for an empty port at the end of the
+  authority, while remaining idempotent.
+
 2.4.1 (2026-03-20)
 ------------------
 

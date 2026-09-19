@@ -516,13 +516,9 @@ KNOWN_SAFE_URL_STRING_URL_ISSUES = {
     "https://%80.example",  # Invalid domain name (non-visible character)
     "http://192.168.0.256",  # Invalid IP address
     "http://192.168.0.0.0",  # Invalid IP address / domain name
-    "https://example.com:",  # Removes the :
     # Some path characters that RFC 2396 and RFC 3986 require escaping (%)
     # are not escaped.
     f"https://example.com/{PATH_TO_ENCODE}",
-    # ? is removed
-    "https://example.com?",
-    "https://example.com/?",
     # Some query characters that RFC 2396 and RFC 3986 require escaping (%)
     # are not escaped.
     f"a://example.com?{QUERY_TO_ENCODE}",
@@ -532,11 +528,6 @@ KNOWN_SAFE_URL_STRING_URL_ISSUES = {
         f"{scheme}://example.com?{SPECIAL_QUERY_TO_ENCODE}"
         for scheme in _SPECIAL_SCHEMES
     ),
-    # ? and # are removed
-    "https://example.com#",
-    "https://example.com/#",
-    "https://example.com?#",
-    "https://example.com/?#",
     # Some fragment characters that RFC 2396 and RFC 3986 require escaping
     # (%) are not escaped.
     f"a://example.com#{FRAGMENT_TO_ENCODE}",
@@ -648,6 +639,91 @@ class TestUrl:
 
         safeurl = safe_url_string('http://google.com/"hello"')
         assert safeurl == "http://google.com/%22hello%22"
+
+    def test_safe_url_string_empty_query_and_fragment_delimiters(self):
+        for url in (
+            "https://example.com?",
+            "https://example.com#",
+            "https://example.com/?",
+            "https://example.com/#",
+            "https://example.com?#",
+            "https://example.com/?#",
+        ):
+            assert safe_url_string(url) == url
+            assert safe_url_string(safe_url_string(url)) == url
+
+    def test_safe_url_string_empty_delimiters_with_hosts_and_path_encoding(self):
+        cases = (
+            (
+                "https://bücher.de/ñ?",
+                {},
+                "https://xn--bcher-kva.de/%C3%B1?",
+            ),
+            (
+                "https://bücher.de/%C3%B1?",
+                {},
+                "https://xn--bcher-kva.de/%C3%B1?",
+            ),
+            (
+                "http://[::1]/ñ?#",
+                {},
+                "http://[::1]/%C3%B1?#",
+            ),
+            (
+                "https://bücher.de/ñ?",
+                {"path_encoding": "latin-1"},
+                "https://xn--bcher-kva.de/%F1?",
+            ),
+            (
+                "https://bücher.de/ñ?",
+                {"quote_path": False},
+                "https://xn--bcher-kva.de/ñ?",
+            ),
+            (
+                "http://[::1]/ñ?#",
+                {"quote_path": False},
+                "http://[::1]/ñ?#",
+            ),
+            (
+                "https://bücher.de/ñ?unit=µ#",
+                {"encoding": "latin-1"},
+                "https://xn--bcher-kva.de/%C3%B1?unit=%B5#",
+            ),
+            (
+                "https://bücher.de/ñ?unit=µ#",
+                {"encoding": "latin-1", "path_encoding": "latin-1"},
+                "https://xn--bcher-kva.de/%F1?unit=%B5#",
+            ),
+            (
+                "https://bücher.de/ñ?unit=µ#",
+                {"encoding": "latin-1", "quote_path": False},
+                "https://xn--bcher-kva.de/ñ?unit=%B5#",
+            ),
+            (
+                "https://bücher.de/ñ?#µ",
+                {"encoding": "latin-1"},
+                "https://xn--bcher-kva.de/%C3%B1?#%B5",
+            ),
+            (
+                "http://%25user@example.com/ñ?",
+                {},
+                "http://%25user@example.com/%C3%B1?",
+            ),
+            (
+                "https://bücher.de:?",
+                {},
+                "https://xn--bcher-kva.de:?",
+            ),
+            (
+                "http://[::1]:#",
+                {},
+                "http://[::1]:#",
+            ),
+        )
+        for url, kwargs, expected in cases:
+            actual = safe_url_string(url, **kwargs)
+            assert actual == expected
+            assert safe_url_string(actual, **kwargs) == expected
 
     def test_safe_url_string_with_query(self):
         safeurl = safe_url_string("http://www.example.com/£?unit=µ")
@@ -833,6 +909,16 @@ class TestUrl:
             safe_url_string("http://www.example.com:/résumé?q=résumé")
             == "http://www.example.com/r%C3%A9sum%C3%A9?q=r%C3%A9sum%C3%A9"
         )
+
+    def test_safe_url_string_empty_port_colon(self):
+        for url in (
+            "https://example.com:",
+            "https://example.com:?",
+            "https://example.com:#",
+            "https://example.com:?#",
+        ):
+            assert safe_url_string(url) == url
+            assert safe_url_string(safe_url_string(url)) == url
 
     def test_safe_url_string_preserve_nonfragment_hash(self):
         # don't decode `%23` to `#`

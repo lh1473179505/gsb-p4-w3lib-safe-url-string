@@ -82,16 +82,17 @@ def _safe_url_split(
     encoding: str = "utf8",
     path_encoding: str = "utf8",
     quote_path: bool = True,
-) -> tuple[str, str, str, str, str]:
+) -> tuple[str, str, str, str, str, bool, bool]:
     # urlsplit() chokes on bytes input with non-ASCII chars,
     # so let's decode (to Unicode) using page encoding:
     #   - it is assumed that a raw bytes input comes from a document
     #     encoded with the supplied encoding (or UTF8 by default)
     #   - if the supplied (or default) encoding chokes,
     #     percent-encode offending bytes
-    parts = _urlsplit(
-        _strip(to_unicode(url, encoding=encoding, errors="percentencode"))
+    normalized_url = _strip(
+        to_unicode(url, encoding=encoding, errors="percentencode")
     )
+    parts = _urlsplit(normalized_url)
     tmp_buf = bytearray()  # utf-8 bytes
 
     if parts.username is not None or parts.password is not None:
@@ -130,6 +131,30 @@ def _safe_url_split(
     if parts.port is not None:
         tmp_buf.append(58)  # ord(":")
         tmp_buf += str(parts.port).encode("ascii")
+
+    # urllib-style split results only retain component values, not whether
+    # their delimiters were present. Keep that syntax for empty query and
+    # fragment components, which is important for idempotency.
+    fragment_start = normalized_url.find("#")
+    query_start = normalized_url.find("?")
+    has_fragment = fragment_start != -1
+    has_query = query_start != -1 and (
+        fragment_start == -1 or query_start < fragment_start
+    )
+
+    # An empty port at the end of an authority (including before an empty
+    # query or fragment) has no component value but still has a delimiter.
+    # Preserve it for the authority-terminated forms handled here. When a path
+    # follows, the existing path normalization remains unchanged.
+    preserve_empty_port = (
+        parts.hostname is not None
+        and parts.port is None
+        and parts.netloc.endswith(":")
+        and not parts.path
+        and not parts.query
+    )
+    if preserve_empty_port:
+        tmp_buf.append(58)  # ord(":")
 
     netloc = tmp_buf.decode()
     tmp_buf.clear()
@@ -170,6 +195,8 @@ def _safe_url_split(
         path,
         query,
         fragment,
+        has_query,
+        has_fragment,
     )
 
 
@@ -210,13 +237,33 @@ def safe_url_string(
     is not encoded or quoted. Given encoding is used for query string
     or form data.
 
+    Empty query and fragment delimiters are retained. A trailing colon for an
+    empty port is likewise retained when the authority is followed only by
+    empty query or fragment components, which keeps such URLs unchanged on
+    repeated calls.
+
     When passing an encoding, you should use the encoding of the
     original page (the page from which the URL was extracted from).
 
     Calling this function on an already "safe" URL will return the URL
     unmodified.
     """
-    return _urlunsplit(*_safe_url_split(url, encoding, path_encoding, quote_path))
+    (
+        scheme,
+        netloc,
+        path,
+        query,
+        fragment,
+        has_query,
+        has_fragment,
+    ) = _safe_url_split(url, encoding, path_encoding, quote_path)
+
+    result = _urlunsplit(scheme, netloc, path, "", "")
+    if has_query:
+        result = f"{result}?{query}"
+    if has_fragment:
+        result = f"{result}#{fragment}"
+    return result
 
 
 _parent_dirs = re.compile(r"/?(\.\./)+")
@@ -702,11 +749,13 @@ def canonicalize_url(
     if isinstance(url, ParseResult):
         url = _urlunparse(*url)
     try:
-        scheme, netloc, path, query, fragment = _safe_url_split(
+        scheme, netloc, path, query, fragment, *_ = _safe_url_split(
             url, encoding=encoding or "utf8"
         )
     except UnicodeEncodeError:
-        scheme, netloc, path, query, fragment = _safe_url_split(url, encoding="utf8")
+        scheme, netloc, path, query, fragment, *_ = _safe_url_split(
+            url, encoding="utf8"
+        )
     path, params = _split_params(scheme, path)
 
     # 1. decode query-string as UTF-8 (or keep raw bytes),
